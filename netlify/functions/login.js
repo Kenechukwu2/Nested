@@ -1,11 +1,4 @@
-// netlify/functions/login.js
-// This serverless function authenticates a user. It accepts a POST request
-// containing either a username or email and a password, and verifies the
-// credentials against the users table in Netlify DB (Neon Postgres). If the
-// credentials are valid, it returns user info; otherwise it returns an error.
-
-import { neon } from '@netlify/neon';
-
+const { neon } = require('@netlify/neon');
 const sql = neon();
 
 async function ensureUsersTable() {
@@ -18,44 +11,74 @@ async function ensureUsersTable() {
   );`;
 }
 
-export default async (req) => {
-  if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 });
+exports.handler = async (event, context) => {
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Method Not Allowed' })
+    };
   }
-  await ensureUsersTable();
-  let body;
+
   try {
-    body = await req.json();
+    await ensureUsersTable();
+    let body;
+    try {
+      body = JSON.parse(event.body || '{}');
+    } catch (err) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Invalid JSON body' })
+      };
+    }
+    const usernameOrEmail = body.username || body.email;
+    const password = body.password;
+    if (!usernameOrEmail) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Missing username or email' })
+      };
+    }
+    if (!password) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Missing password' })
+      };
+    }
+
+    const result = await sql`SELECT * FROM users WHERE username = ${usernameOrEmail} OR email = ${usernameOrEmail}`;
+    if (!result || result.length === 0) {
+      return {
+        statusCode: 404,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'User not found' })
+      };
+    }
+    const user = result[0];
+    if (user.password !== password) {
+      return {
+        statusCode: 401,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Invalid password' })
+      };
+    }
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user.username, email: user.email })
+    };
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-      status: 400,
+    return {
+      statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-    });
+      body: JSON.stringify({ error: err && err.message ? err.message : 'Server error' })
+    };
   }
-  const { username, email, password } = body || {};
-  if (!password || (!username && !email)) {
-    return new Response(JSON.stringify({ error: 'Email or username and password are required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  // Query user by username or email
-  const users = await sql`SELECT id, username, email, password, name FROM users WHERE username = ${username} OR email = ${email}`;
-  if (users.length === 0 || users[0].password !== password) {
-    return new Response(JSON.stringify({ error: 'Invalid credentials' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  const user = users[0];
-  // Don't include the password in the response
-  delete user.password;
-  return new Response(JSON.stringify({ message: 'Login successful', user }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
 };
 
-export const config = {
-  path: '/api/login',
+exports.config = {
+  path: '/api/login'
 };
