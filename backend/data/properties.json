@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "title": "Elegant Apartment",
+    "description": "An elegant apartment in the city center.",
+    "price": 50000,
+    "location": "City Center"
+  },
+  {
+    "id": 2,
+    "title": "Cozy Cottage",
+    "description": "A cozy cottage near the countryside.",
+    "price": 35000,
+    "location": "Countryside"
+  }
+]
