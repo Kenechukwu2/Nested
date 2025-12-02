@@ -1,11 +1,4 @@
-// netlify/functions/properties.js
-// This function serves as both a list and create endpoint for property
-// listings. On GET requests it returns all properties, or a single property
-// when an `id` query parameter is provided. On POST requests it creates a new
-// property record. The data is stored in a Postgres database via Netlify DB.
-
-import { neon } from '@netlify/neon';
-
+const { neon } = require('@netlify/neon');
 const sql = neon();
 
 async function ensurePropertiesTable() {
@@ -20,53 +13,75 @@ async function ensurePropertiesTable() {
   );`;
 }
 
-export default async (req) => {
-  await ensurePropertiesTable();
-  const url = new URL(req.url);
-  if (req.method === 'GET') {
-    const id = url.searchParams.get('id');
-    if (id) {
-      const rows = await sql`SELECT * FROM properties WHERE id = ${id}`;
-      if (rows.length === 0) {
-        return new Response('Not Found', { status: 404 });
+exports.handler = async (event, context) => {
+  try {
+    await ensurePropertiesTable();
+    const method = event.httpMethod;
+    if (method === 'GET') {
+      const id = event.queryStringParameters && event.queryStringParameters.id;
+      if (id) {
+        const rows = await sql`SELECT * FROM properties WHERE id = ${id}`;
+        if (!rows || rows.length === 0) {
+          return {
+            statusCode: 404,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ error: 'Property not found' })
+          };
+        }
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(rows[0])
+        };
+      } else {
+        const rows = await sql`SELECT * FROM properties`;
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(rows)
+        };
       }
-      return new Response(JSON.stringify(rows[0]), {
-        status: 200,
+    } else if (method === 'POST') {
+      let body;
+      try {
+        body = JSON.parse(event.body || '{}');
+      } catch (err) {
+        return {
+          statusCode: 400,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'Invalid JSON body' })
+        };
+      }
+      const { title, description, price, location, image, address } = body;
+      if (!title) {
+        return {
+          statusCode: 400,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'Missing title' })
+        };
+      }
+      const result = await sql`INSERT INTO properties (title, description, price, location, image, address) VALUES (${title}, ${description}, ${price}, ${location}, ${image}, ${address}) RETURNING *`;
+      return {
+        statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-      });
+        body: JSON.stringify(result[0])
+      };
+    } else {
+      return {
+        statusCode: 405,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Method Not Allowed' })
+      };
     }
-    const all = await sql`SELECT * FROM properties ORDER BY id`; 
-    return new Response(JSON.stringify(all), {
-      status: 200,
+  } catch (err) {
+    return {
+      statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-    });
+      body: JSON.stringify({ error: err && err.message ? err.message : 'Server error' })
+    };
   }
-  if (req.method === 'POST') {
-    let body;
-    try {
-      body = await req.json();
-    } catch (err) {
-      return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    const { title, description, price, location, image, address } = body || {};
-    if (!title) {
-      return new Response(JSON.stringify({ error: 'Title is required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    const inserted = await sql`INSERT INTO properties (title, description, price, location, image, address) VALUES (${title}, ${description}, ${price}, ${location}, ${image}, ${address}) RETURNING *`;
-    return new Response(JSON.stringify(inserted[0]), {
-      status: 201,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response('Method Not Allowed', { status: 405 });
 };
 
-export const config = {
-  path: '/api/properties',
+exports.config = {
+  path: '/api/properties'
 };
